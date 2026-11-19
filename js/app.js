@@ -44,6 +44,8 @@ let original = null;          // full-res source (canvas or ImageBitmap)
 let doc = null;               // { w, h }
 const docCanvas = document.createElement('canvas');
 const thumbCanvas = document.createElement('canvas');
+document.getElementById('refWrap').prepend(docCanvas); // the untouched original, shown in Stack view
+const REF_GAP = 18; // px between the edit and the original in Stack view (matches #refWrap margin)
 thumbCanvas.width = THUMB_W; thumbCanvas.height = THUMB_H;
 let uid = 1;
 const brush = { active: false, mode: 0, size: 180, hardness: 0, exposure: 0.5, show: false };
@@ -277,6 +279,10 @@ function applyView() {
   canvas.style.width = doc.w * view.zoom + 'px';
   canvas.style.height = doc.h * view.zoom + 'px';
   canvas.classList.toggle('pix', view.zoom >= 2);
+  docCanvas.style.width = canvas.style.width;
+  docCanvas.style.height = canvas.style.height;
+  docCanvas.classList.toggle('pix', view.zoom >= 2);
+  vp.classList.toggle('stack', view.compare === 'stack');
   stage.style.transform = `translate(${view.x}px, ${view.y}px)`;
   $('#zoomBtn').textContent = Math.round(view.zoom * 100) + '%';
   const showSplit = view.compare === 'split' && !view.peek;
@@ -287,9 +293,11 @@ function fit() {
   if (!doc) return;
   const r = vp.getBoundingClientRect();
   const pad = 36;
-  view.zoom = Math.min((r.width - pad * 2) / doc.w, (r.height - pad * 2) / doc.h, 4);
+  const stack = view.compare === 'stack';
+  const gap = stack ? REF_GAP : 0, rows = stack ? 2 : 1;
+  view.zoom = Math.min((r.width - pad * 2) / doc.w, (r.height - pad * 2 - gap) / (doc.h * rows), 4);
   view.x = (r.width - doc.w * view.zoom) / 2;
-  view.y = (r.height - doc.h * view.zoom) / 2;
+  view.y = (r.height - doc.h * view.zoom * rows - gap) / 2;
   applyView();
 }
 function zoomAt(z, mx, my) {
@@ -309,6 +317,7 @@ vp.addEventListener('wheel', (e) => {
 let drag = null;
 vp.addEventListener('contextmenu', (e) => e.preventDefault());
 vp.addEventListener('pointerdown', (e) => {
+  if (drag) return; // a resting palm or second finger mustn't hijack a stroke
   if (e.target.closest('#splitLine span')) {
     drag = { split: true };
   } else if (brush.active && e.button === 0 && !spaceDown && doc) {
@@ -317,9 +326,11 @@ vp.addEventListener('pointerdown', (e) => {
     drag = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y };
     vp.classList.add('panning');
   }
+  if (drag) drag.pointer = e.pointerId;
   vp.setPointerCapture(e.pointerId);
 });
 vp.addEventListener('pointermove', (e) => {
+  if (drag && e.pointerId !== drag.pointer) return;
   moveRing(e);
   if (!drag) return;
   if (drag.paint) {
@@ -334,8 +345,9 @@ vp.addEventListener('pointermove', (e) => {
     applyView();
   }
 });
-const endDrag = () => {
-  if (drag?.paint) endStroke();
+const endDrag = (e) => {
+  if (!drag || (drag.pointer !== undefined && e && e.pointerId !== drag.pointer)) return;
+  if (drag.paint) endStroke();
   drag = null;
   vp.classList.remove('panning');
 };
@@ -783,7 +795,9 @@ function toast(msg, ms = 1800) {
   toastT = setTimeout(() => t.classList.remove('show'), ms);
 }
 function setCompare(v) {
+  const refit = (v === 'stack') !== (view.compare === 'stack');
   view.compare = v;
+  if (refit) fit();
   for (const b of document.querySelectorAll('#compare button')) b.classList.toggle('on', b.dataset.v === v);
   applyView(); requestRender();
 }

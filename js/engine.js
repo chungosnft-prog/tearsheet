@@ -25,26 +25,29 @@ export class Engine {
     this.emptyMask = this.createMaskTex(1, 1);
   }
 
-  // RG8 paint map (R = dodge, G = burn), rows stored top-down
+  // Paint map (R = dodge, G = burn), rows stored top-down. Stored as RGBA8 so
+  // every upload row is 4-byte aligned: iPadOS 14's experimental WebGL 2
+  // dropped some 2-byte-per-pixel sub-uploads, leaving patches unpaintable.
   createMaskTex(w, h) {
     const gl = this.gl;
     const tex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, tex);
-    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RG8, w, h);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, w, h);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    this.uploadMask(tex, 0, 0, w, h, new Uint8Array(w * h * 2));
+    this.uploadMask(tex, 0, 0, w, h, new Uint8Array(w * h * 4));
     return tex;
   }
 
-  uploadMask(tex, x, y, w, h, rg8) {
+  // returns false if the driver rejected the upload
+  uploadMask(tex, x, y, w, h, rgba8) {
     const gl = this.gl;
+    while (gl.getError()) { /* clear stale errors */ }
     gl.bindTexture(gl.TEXTURE_2D, tex);
-    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-    gl.texSubImage2D(gl.TEXTURE_2D, 0, x, y, w, h, gl.RG, gl.UNSIGNED_BYTE, rg8);
-    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, x, y, w, h, gl.RGBA, gl.UNSIGNED_BYTE, rgba8);
+    return gl.getError() === gl.NO_ERROR;
   }
 
   deleteMaskTex(tex) { this.gl.deleteTexture(tex); }

@@ -83,7 +83,11 @@ main { display: grid; grid-template-columns: minmax(0, 1fr) 336px 320px; height:
   display: block; box-shadow: 0 18px 50px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.04);
   background: repeating-conic-gradient(#2b2a30 0 25%, #222127 0 50%) 0 0 / 20px 20px;
 }
-#gl.pix { image-rendering: pixelated; }
+#gl.pix, #refWrap canvas.pix { image-rendering: pixelated; }
+#refWrap { display: none; position: relative; margin-top: 18px; }
+#viewport.stack #refWrap { display: block; }
+#refWrap canvas { display: block; box-shadow: 0 18px 50px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.04); }
+.ref-tag { position: absolute; left: 8px; top: 8px; font: 11px var(--mono); padding: 3px 7px; border-radius: 4px; background: rgba(0,0,0,.6); color: var(--text); pointer-events: none; }
 #splitLine { position: absolute; top: 0; bottom: 0; width: 0; display: none; z-index: 3; }
 #splitLine::before { content: ""; position: absolute; top: 0; bottom: 0; left: -1px; width: 2px; background: var(--yellow); box-shadow: 0 0 0 1px rgba(0,0,0,.35); }
 #splitLine span {
@@ -248,8 +252,15 @@ html:has(.nogl), body:has(.nogl) { overflow: auto; }
   #gallery { grid-column: 2; grid-row: 1; }
   #inspector { grid-column: 2; grid-row: 2; border-top: 1px solid var(--line); }
   .brand small { display: none; }
+  /* iPad: wrap the tools onto a second row instead of hiding them off-screen */
+  body { display: flex; flex-direction: column; }
+  .top { height: auto; flex-wrap: wrap; padding: 8px 14px; row-gap: 8px; }
+  .tools { order: 3; flex-basis: 100%; flex-wrap: wrap; row-gap: 6px; overflow: visible; }
+  .right { margin-left: auto; }
+  main { flex: 1; min-height: 0; height: auto; }
 }
 @media (max-width: 760px) {
+  main { flex: none; }
   html, body { overflow: auto; }
   main { display: flex; flex-direction: column; height: auto; }
   #viewport { height: 60vh; flex: none; }

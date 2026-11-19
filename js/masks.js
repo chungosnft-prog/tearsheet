@@ -138,12 +138,13 @@ export class MaskStore {
     const [x0, y0, x1, y1] = m.dirty;
     m.dirty = null;
     const cw = x1 - x0, ch = y1 - y0;
-    const out = new Uint8Array(cw * ch * 2);
+    const out = new Uint8Array(cw * ch * 4);
     for (let y = 0; y < ch; y++) {
-      let i = ((y + y0) * m.w + x0) * 2, o = y * cw * 2;
-      for (let k = 0; k < cw * 2; k++) out[o++] = m.data[i++] >> 8;
+      let i = ((y + y0) * m.w + x0) * 2, o = y * cw * 4;
+      for (let k = 0; k < cw; k++, i += 2, o += 4) { out[o] = m.data[i] >> 8; out[o + 1] = m.data[i + 1] >> 8; out[o + 3] = 255; }
     }
-    this.engine.uploadMask(m.tex, x0, y0, cw, ch, out);
+    // if a partial upload is refused, resend the whole map next frame
+    if (!this.engine.uploadMask(m.tex, x0, y0, cw, ch, out) && (cw < m.w || ch < m.h)) this.markDirty(m, 0, 0, m.w, m.h);
   }
   flushAll() { for (const m of this.masks.values()) this.flush(m); }
 

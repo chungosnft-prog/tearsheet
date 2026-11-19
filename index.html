@@ -33,7 +33,7 @@
     <button id="brushBtn" class="tool" title="Dodge &amp; Burn brush (O)">◐ Dodge / Burn</button>
     <span class="sep"></span>
     <div class="seg" id="compare" title="Hold \ to peek at the original">
-      <button data-v="after" class="on">After</button><button data-v="split">Split</button><button data-v="before">Before</button>
+      <button data-v="after" class="on">After</button><button data-v="split">Split</button><button data-v="stack" title="Original stacked under your edit">Stack</button><button data-v="before">Before</button>
     </div>
   </div>
   <div class="right">
@@ -45,7 +45,7 @@
 
 <main>
   <section id="viewport">
-    <div id="stage"><canvas id="gl"></canvas></div>
+    <div id="stage"><canvas id="gl"></canvas><div id="refWrap"><span class="ref-tag">Original</span></div></div>
     <div id="splitLine"><span></span></div>
     <div id="brushRing"></div>
     <div id="dropHint">Drop an image anywhere</div>
