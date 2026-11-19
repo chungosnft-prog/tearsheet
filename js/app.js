@@ -11,7 +11,29 @@ const THUMB_W = 300, THUMB_H = 225, THUMB_PX = 0.55;
 
 const canvas = $('#gl');
 let engine;
-try { engine = new Engine(canvas); } catch (e) { document.body.innerHTML = `<p class="empty">${e.message}</p>`; throw e; }
+try { engine = new Engine(canvas); } catch (e) { showNoWebGL(); throw e; }
+
+// iOS/iPadOS 14 ships WebGL 2 switched off; everything here runs on it.
+function showNoWebGL() {
+  const probe = document.createElement('canvas');
+  const hasGL1 = !!(probe.getContext('webgl') || probe.getContext('experimental-webgl'));
+  const apple = /iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent) && /Safari/.test(navigator.userAgent) && !/Chrome|CriOS|FxiOS|Edg/.test(navigator.userAgent);
+  const steps = apple
+    ? `<ol>
+        <li>Open <b>Settings → Safari → Advanced → Experimental Features</b></li>
+        <li>Turn on <b>WebGL 2.0</b></li>
+        <li>Come back here and reload the page</li>
+      </ol>
+      <p class="alt">Or update to iPadOS / iOS 15 or later, where it’s already on.</p>`
+    : `<p>Try the latest Chrome, Safari, Edge or Firefox, and make sure hardware acceleration is switched on.</p>`;
+  document.body.innerHTML = `
+    <div class="nogl">
+      <span class="logo" aria-hidden="true"></span>
+      <h1>Tearsheet needs WebGL 2</h1>
+      <p>${hasGL1 ? 'This browser has WebGL 2 turned off, and every filter here runs on it.' : 'This browser can’t run WebGL, which every filter here needs.'}</p>
+      ${steps}
+    </div>`;
+}
 
 const masks = new MaskStore(engine);
 
@@ -453,7 +475,7 @@ function filterGallery(q) {
       const t = thumbEls[b.dataset.id];
       const hit = !q || t.label.includes(q) || t.cat.includes(q) || EFFECTS[ITEMS[b.dataset.id].effect].name.toLowerCase().includes(q);
       b.style.display = hit ? '' : 'none';
-      any ||= hit;
+      any = any || hit;
     }
     sec.style.display = any ? '' : 'none';
   }
@@ -845,14 +867,17 @@ if (!saved) {
   state.layers = r.layers.map(([item, ov, extra]) => makeLayer(item, ov, extra));
   state.sel = state.layers[state.layers.length - 1].id;
 }
-for (const L of state.layers) {
-  if (!isDB(L)) continue;
-  if (L.mask) { L.mask.ver = 0; await masks.restore(L.mask.id); }
-  ensureMask(L);
-}
-commit();
-refreshAll();
-loadSample();
+// No top-level await here: Safari 14 (iPadOS 14) can't parse it.
+(async () => {
+  for (const L of state.layers) {
+    if (!isDB(L)) continue;
+    if (L.mask) { L.mask.ver = 0; await masks.restore(L.mask.id); }
+    ensureMask(L);
+  }
+  commit();
+  refreshAll();
+  loadSample();
+})();
 
 // debugging handle
 window.tearsheet = { state, engine, masks, brush, applyRecipe, RECIPES, renderNow, setTool, loadFile, srcLimits };
