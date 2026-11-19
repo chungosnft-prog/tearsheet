@@ -22,6 +22,39 @@ export class Engine {
     this.pools = new Map();
     this.errors = new Map();
     this.vs = this.shader(gl.VERTEX_SHADER, VERT);
+    this.emptyMask = this.createMaskTex(1, 1);
+  }
+
+  // RG8 paint map (R = dodge, G = burn), rows stored top-down
+  createMaskTex(w, h) {
+    const gl = this.gl;
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RG8, w, h);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    this.uploadMask(tex, 0, 0, w, h, new Uint8Array(w * h * 2));
+    return tex;
+  }
+
+  uploadMask(tex, x, y, w, h, rg8) {
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, x, y, w, h, gl.RG, gl.UNSIGNED_BYTE, rg8);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+  }
+
+  deleteMaskTex(tex) { this.gl.deleteTexture(tex); }
+
+  bindMask(P, unit, tex) {
+    const gl = this.gl;
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    gl.bindTexture(gl.TEXTURE_2D, tex || this.emptyMask);
+    gl.uniform1i(this.loc(P, 'u_mask'), unit);
+    gl.activeTexture(gl.TEXTURE0);
   }
 
   shader(type, src) {
@@ -166,6 +199,11 @@ export class Engine {
             this.draw(P, inp, o, (P) => {
               this.setParams(P, def, L.params, pxScale);
               gl.uniform1i(this.loc(P, 'u_pass'), i);
+              if (def.mask) {
+                this.bindMask(P, 2, L.maskTex);
+                gl.uniform1f(this.loc(P, 'u_hasMask'), L.maskTex ? 1 : 0);
+                gl.uniform1f(this.loc(P, 'u_demo'), L.demo ? 1 : 0);
+              }
             });
             inp = o;
           }
@@ -195,7 +233,7 @@ export class Engine {
     return cur;
   }
 
-  present(target, srcKey, split) {
+  present(target, srcKey, split, overlayTex = null) {
     const gl = this.gl;
     const src = this.sources[srcKey];
     if (this.canvas.width !== src.w || this.canvas.height !== src.h) {
@@ -214,6 +252,8 @@ export class Engine {
     gl.uniform1i(this.loc(P, 'u_tex'), 0);
     gl.uniform2f(this.loc(P, 'u_res'), src.w, src.h);
     gl.uniform1f(this.loc(P, 'u_split'), split);
+    this.bindMask(P, 2, overlayTex);
+    gl.uniform1f(this.loc(P, 'u_showMask'), overlayTex ? 1 : 0);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 

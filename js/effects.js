@@ -163,6 +163,10 @@ export const EFFECTS = {
   },
   blur: { name: 'Gaussian Blur', frag: S.COMMON + S.BLUR, passes: 2, params: [sec('Blur'), px('radius', 'Radius', 0, 100, 6, 0.5)] },
   sharpen: { name: 'Sharpen', frag: S.COMMON + S.SHARPEN, params: [sec('Unsharp mask'), r('amount', 'Amount', 0, 4, 1), px('radius', 'Radius', 0.5, 16, 2, 0.1)] },
+  dodgeburn: {
+    name: 'Dodge & Burn', frag: S.COMMON + S.DODGEBURN, mask: true,
+    params: [sec('Tone response'), sel('range', 'Range', ['Shadows', 'Midtones', 'Highlights', 'All tones'], 1), r('strength', 'Strength', 0, 2, 1), bool('protect', 'Protect colour', true)],
+  },
   pixelate: { name: 'Pixelate', frag: S.COMMON + S.PIXELATE, params: [sec('Mosaic'), px('cell', 'Cell size', 2, 100, 12)] },
 };
 
@@ -232,6 +236,7 @@ export const GALLERY = [
     ['grain', 'Film Grain', 'grain', {}],
   ] },
   { cat: 'Adjust', items: [
+    ['dodgeburn', 'Dodge & Burn', 'dodgeburn', {}],
     ['levels', 'Levels & Tone', 'levels', {}],
     ['sepia', 'Sepia Tint', 'levels', { tintAmt: 0.85, contrast: 0.1 }],
     ['posterize', 'Posterize', 'posterize', {}],

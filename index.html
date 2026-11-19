@@ -30,6 +30,8 @@
     <button id="undoBtn" class="icon" title="Undo (⌘Z)">↶</button>
     <button id="redoBtn" class="icon" title="Redo (⇧⌘Z)">↷</button>
     <span class="sep"></span>
+    <button id="brushBtn" class="tool" title="Dodge &amp; Burn brush (O)">◐ Dodge / Burn</button>
+    <span class="sep"></span>
     <div class="seg" id="compare" title="Hold \ to peek at the original">
       <button data-v="after" class="on">After</button><button data-v="split">Split</button><button data-v="before">Before</button>
     </div>
@@ -45,6 +47,7 @@
   <section id="viewport">
     <div id="stage"><canvas id="gl"></canvas></div>
     <div id="splitLine"><span></span></div>
+    <div id="brushRing"></div>
     <div id="dropHint">Drop an image anywhere</div>
     <div class="hud" id="hud"></div>
   </section>

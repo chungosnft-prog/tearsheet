@@ -701,6 +701,29 @@ void main(){
   fragColor = vec4(clamp(s.rgb + (s.rgb - b) * u_amount, 0.0, 1.0), s.a);
 }`;
 
+// Painted dodge (R) / burn (G) map, stored y-down so p / u_res addresses it.
+export const DODGEBURN = `
+uniform sampler2D u_mask; uniform float u_hasMask; uniform float u_demo;
+uniform int u_range; uniform float u_strength; uniform float u_protect;
+float rangeW(float l){
+  if(u_range == 0) return pow(1.0 - l, 1.5);
+  if(u_range == 1) return clamp(4.0 * l * (1.0 - l) * 1.15, 0.0, 1.0);
+  if(u_range == 2) return pow(l, 1.5);
+  return 1.0;
+}
+float shift(float v, float e, float w){ return e > 0.0 ? v + (1.0 - v) * (1.0 - exp2(-2.5 * e * w)) : v * exp2(2.5 * e * w); }
+void main(){
+  vec2 p = P(); vec4 s = samp(p);
+  vec2 m = vec2(0.0);
+  if(u_hasMask > 0.5) m = texture(u_mask, p / u_res).rg;
+  if(u_demo > 0.5){ float r = length((p / u_res - 0.5) * vec2(1.0, 0.8)); m = vec2(smoothstep(0.32, 0.0, r) * 0.8, smoothstep(0.28, 0.6, r)); }
+  float e = (m.r - m.g) * u_strength;
+  float l = luma(s.rgb);
+  float w = rangeW(l);
+  vec3 c = u_protect > 0.5 ? s.rgb + vec3(shift(l, e, w) - l) : vec3(shift(s.r, e, w), shift(s.g, e, w), shift(s.b, e, w));
+  fragColor = vec4(clamp(c, 0.0, 1.0), s.a);
+}`;
+
 export const PIXELATE = `
 uniform float u_cell;
 void main(){
@@ -735,8 +758,15 @@ void main(){
 }`;
 
 export const DISPLAY = `
-uniform sampler2D u_src; uniform float u_split;
+uniform sampler2D u_src; uniform float u_split; uniform sampler2D u_mask; uniform float u_showMask;
 void main(){
   vec2 uv = gl_FragCoord.xy / u_res;
-  fragColor = gl_FragCoord.x < u_split ? texture(u_src, uv) : texture(u_tex, uv);
+  vec4 c = gl_FragCoord.x < u_split ? texture(u_src, uv) : texture(u_tex, uv);
+  if(u_showMask > 0.5){
+    vec2 m = texture(u_mask, vec2(uv.x, 1.0 - uv.y)).rg;
+    c.rgb = mix(c.rgb, vec3(1.0, 0.82, 0.25), m.r * 0.65);
+    c.rgb = mix(c.rgb, vec3(0.2, 0.5, 1.0), m.g * 0.65);
+    c.a = max(c.a, max(m.r, m.g) * 0.65);
+  }
+  fragColor = c;
 }`;

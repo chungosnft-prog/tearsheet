@@ -195,6 +195,29 @@ input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 
 .layer.drop-below { box-shadow: inset 0 -2px 0 var(--pink); }
 .layer .grip { color: var(--dim); cursor: grab; font-size: 11px; }
 
+/* ---------- dodge & burn brush */
+button.tool.on { background: rgba(255,210,63,.14); border-color: var(--yellow); color: var(--yellow); }
+#viewport.brush { cursor: none; }
+#viewport.brush.panmode, #viewport.panmode { cursor: grab; }
+#viewport.brush.panning { cursor: grabbing; }
+#brushRing {
+  position: absolute; display: none; pointer-events: none; z-index: 4; border-radius: 50%;
+  transform: translate(-50%, -50%); border: 1.5px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.55), inset 0 0 0 1px rgba(0,0,0,.35);
+}
+#brushRing::before {
+  content: ""; position: absolute; left: 50%; top: 50%; width: var(--h, 4%); height: var(--h, 4%); min-width: 3px; min-height: 3px;
+  transform: translate(-50%, -50%); border-radius: 50%; border: 1px dashed rgba(255,255,255,.55);
+}
+#brushRing::after {
+  content: ""; position: absolute; left: 50%; top: 50%; width: 3px; height: 3px; margin: -1.5px 0 0 -1.5px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.6);
+}
+#brushRing[data-mode="dodge"] { border-color: var(--yellow); }
+#brushRing[data-mode="burn"] { border-color: var(--blue); }
+#brushRing[data-mode="erase"] { border-style: dashed; }
+.paint-btn { width: 100%; margin: 2px 0 8px; padding: 8px; font-weight: 600; }
+.paint-btn.on { background: rgba(255,210,63,.14); border-color: var(--yellow); color: var(--yellow); }
+.hint { color: var(--dim); font-size: 11px; line-height: 1.7; margin: 8px 0 0; }
+
 #toast {
   position: fixed; left: 50%; bottom: 22px; transform: translate(-50%, 20px); opacity: 0; pointer-events: none;
   background: #2a2930; border: 1px solid var(--line2); padding: 8px 14px; border-radius: 8px; transition: all .2s; z-index: 50; box-shadow: 0 8px 30px rgba(0,0,0,.5);

@@ -2,6 +2,7 @@ import { Engine } from './engine.js';
 import { EFFECTS, GALLERY, ITEMS, BLENDS, defaultsFor } from './effects.js';
 import { RECIPES } from './recipes.js';
 import { makeSample } from './sample.js';
+import { MaskStore } from './masks.js';
 
 const $ = (s) => document.querySelector(s);
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
@@ -12,6 +13,8 @@ const canvas = $('#gl');
 let engine;
 try { engine = new Engine(canvas); } catch (e) { document.body.innerHTML = `<p class="empty">${e.message}</p>`; throw e; }
 
+const masks = new MaskStore(engine);
+
 // ---------------------------------------------------------------- state
 let state = { layers: [], sel: null, docLong: 2000 };
 const view = { zoom: 1, x: 0, y: 0, compare: 'after', split: 0.5, peek: false };
@@ -21,6 +24,10 @@ const docCanvas = document.createElement('canvas');
 const thumbCanvas = document.createElement('canvas');
 thumbCanvas.width = THUMB_W; thumbCanvas.height = THUMB_H;
 let uid = 1;
+const brush = { active: false, mode: 0, size: 180, hardness: 0, exposure: 0.5, show: false };
+try { Object.assign(brush, JSON.parse(localStorage.getItem('tearsheet.brush')) || {}, { active: false }); } catch {}
+const saveBrush = () => { try { const { active, ...b } = brush; localStorage.setItem('tearsheet.brush', JSON.stringify(b)); } catch {} };
+let spaceDown = false;
 
 function load() {
   try {
@@ -36,6 +43,7 @@ function load() {
 }
 function save() {
   try { localStorage.setItem(STORE, JSON.stringify({ docLong: state.docLong, layers: state.layers })); } catch {}
+  masks.prune(new Set(state.layers.filter((l) => l.mask).map((l) => l.mask.id)));
 }
 
 // ---------------------------------------------------------------- history
@@ -55,6 +63,12 @@ function restore(i) {
   hist.i = i;
   const s = JSON.parse(hist.stack[i]);
   state.layers = s.layers; state.sel = s.sel;
+  for (const L of state.layers) {
+    const m = L.mask && masks.get(L.mask.id);
+    if (!m) continue;
+    if (m.cur !== L.mask.ver) masks.seek(m, L.mask.ver);
+    queueMaskSave(m);
+  }
   save(); updateUndo(); refreshAll();
 }
 const undo = () => hist.i > 0 && restore(hist.i - 1);
@@ -66,23 +80,39 @@ function updateUndo() {
 
 // ---------------------------------------------------------------- layers
 const selLayer = () => state.layers.find((l) => l.id === state.sel);
+const isDB = (L) => !!L && L.effect === 'dodgeburn';
+const aspect = () => (doc ? doc.w / doc.h : 2000 / 1400);
+// every Dodge & Burn layer owns a painted map in the mask store
+function ensureMask(L) {
+  if (!isDB(L)) return null;
+  if (!L.mask) L.mask = { id: masks.create(aspect()).id, ver: 0 };
+  return masks.get(L.mask.id) || masks.create(aspect(), L.mask.id);
+}
 function makeLayer(itemId, overrides = {}, extra = {}) {
   const it = ITEMS[itemId];
-  return { id: uid++, item: itemId, effect: it.effect, params: defaultsFor(itemId, overrides), visible: true, opacity: 1, blend: 0, ...extra };
+  const L = { id: uid++, item: itemId, effect: it.effect, params: defaultsFor(itemId, overrides), visible: true, opacity: 1, blend: 0, ...extra };
+  ensureMask(L);
+  return L;
 }
 function addLayer(itemId) {
   const L = makeLayer(itemId);
   const i = state.layers.findIndex((l) => l.id === state.sel);
-  state.layers.splice(i < 0 ? state.layers.length : i + 1, 0, L);
+  // dodge & burn shapes tone, so by default it sits under every screen
+  if (isDB(L)) state.layers.unshift(L);
+  else state.layers.splice(i < 0 ? state.layers.length : i + 1, 0, L);
   state.sel = L.id;
-  commit(); refreshAll();
-  toast(`Added ${ITEMS[itemId].label}`);
+  commit();
+  if (isDB(L)) { brush.active = true; toast('Dodge & Burn added at the bottom of the stack — paint on the image'); }
+  else toast(`Added ${ITEMS[itemId].label}`);
+  refreshAll();
 }
 function applyItem(itemId, asNew) {
   const L = selLayer();
   if (asNew || !L) return addLayer(itemId);
   const it = ITEMS[itemId];
   L.item = itemId; L.effect = it.effect; L.params = defaultsFor(itemId);
+  ensureMask(L);
+  if (isDB(L)) brush.active = true;
   commit(); refreshAll();
 }
 function applyRecipe(r) {
@@ -93,7 +123,7 @@ function applyRecipe(r) {
 }
 
 // ---------------------------------------------------------------- rendering
-const resolved = () => state.layers.filter((l) => l.visible).map((l) => ({ ...l, def: EFFECTS[l.effect] }));
+const resolved = () => state.layers.filter((l) => l.visible).map((l) => ({ ...l, def: EFFECTS[l.effect], maskTex: l.mask ? masks.get(l.mask.id)?.tex : null }));
 let raf = 0;
 function requestRender() {
   if (raf || !doc) return;
@@ -104,9 +134,14 @@ function splitX() {
   if (view.compare === 'split') return view.split * doc.w;
   return -1;
 }
+function overlayTex() {
+  const L = selLayer();
+  return brush.show && isDB(L) && L.mask ? masks.get(L.mask.id)?.tex : null;
+}
 function renderNow() {
+  masks.flushAll();
   const out = engine.run('doc', resolved(), 1);
-  engine.present(out, 'doc', splitX());
+  engine.present(out, 'doc', splitX(), overlayTex());
   hud();
 }
 function hud() {
@@ -190,11 +225,15 @@ vp.addEventListener('wheel', (e) => {
   const r = vp.getBoundingClientRect();
   const k = e.ctrlKey ? 0.012 : 0.0016;
   zoomAt(view.zoom * Math.exp(-e.deltaY * k), e.clientX - r.left, e.clientY - r.top);
+  moveRing(e);
 }, { passive: false });
 let drag = null;
+vp.addEventListener('contextmenu', (e) => e.preventDefault());
 vp.addEventListener('pointerdown', (e) => {
   if (e.target.closest('#splitLine span')) {
     drag = { split: true };
+  } else if (brush.active && e.button === 0 && !spaceDown && doc) {
+    startStroke(e);
   } else {
     drag = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y };
     vp.classList.add('panning');
@@ -202,8 +241,11 @@ vp.addEventListener('pointerdown', (e) => {
   vp.setPointerCapture(e.pointerId);
 });
 vp.addEventListener('pointermove', (e) => {
+  moveRing(e);
   if (!drag) return;
-  if (drag.split) {
+  if (drag.paint) {
+    paintTo(e);
+  } else if (drag.split) {
     const r = vp.getBoundingClientRect();
     view.split = Math.min(Math.max((e.clientX - r.left - view.x) / (doc.w * view.zoom), 0), 1);
     applyView(); requestRender();
@@ -213,11 +255,111 @@ vp.addEventListener('pointermove', (e) => {
     applyView();
   }
 });
-const endDrag = () => { drag = null; vp.classList.remove('panning'); };
+const endDrag = () => {
+  if (drag?.paint) endStroke();
+  drag = null;
+  vp.classList.remove('panning');
+};
+vp.addEventListener('pointerleave', () => { ring.style.display = 'none'; });
 vp.addEventListener('pointerup', endDrag);
 vp.addEventListener('pointercancel', endDrag);
-vp.addEventListener('dblclick', fit);
+vp.addEventListener('dblclick', () => { if (!brush.active) fit(); });
 new ResizeObserver(() => doc && fit()).observe(vp);
+
+// ---------------------------------------------------------------- dodge & burn brush
+const ring = $('#brushRing');
+let lastPointer = null;
+function docPoint(e) {
+  const r = vp.getBoundingClientRect();
+  return [(e.clientX - r.left - view.x) / view.zoom, (e.clientY - r.top - view.y) / view.zoom];
+}
+const brushMode = (alt) => (brush.mode === 2 ? 2 : alt ? 1 - brush.mode : brush.mode);
+function moveRing(e) {
+  if (e) lastPointer = { clientX: e.clientX, clientY: e.clientY, altKey: e.altKey };
+  const p = lastPointer;
+  if (!brush.active || !p || spaceDown || (drag && !drag.paint)) { ring.style.display = 'none'; return; }
+  const r = vp.getBoundingClientRect();
+  const d = Math.max(brush.size * view.zoom, 4);
+  Object.assign(ring.style, { display: 'block', left: p.clientX - r.left + 'px', top: p.clientY - r.top + 'px', width: d + 'px', height: d + 'px' });
+  ring.style.setProperty('--h', Math.max(brush.hardness, 0.04) * 100 + '%');
+  ring.dataset.mode = ['dodge', 'burn', 'erase'][brushMode(p.altKey)];
+}
+function startStroke(e) {
+  const L = selLayer();
+  if (!isDB(L)) return;
+  const m = ensureMask(L);
+  masks.begin(m);
+  drag = { paint: true, m, L, last: null, rem: 0 };
+  paintTo(e);
+}
+function paintTo(e) {
+  const { m } = drag;
+  const sx = m.w / doc.w, sy = m.h / doc.h;
+  const r = (brush.size / 2) * sx;
+  const mode = brushMode(e.altKey);
+  const amt = brush.exposure * (mode === 2 ? 0.3 : 0.12);
+  const spacing = Math.max(0.75, r * 0.18);
+  const evs = (e.getCoalescedEvents && e.getCoalescedEvents().length) ? e.getCoalescedEvents() : [e];
+  for (const ev of evs) {
+    const [dx, dy] = docPoint(ev);
+    const p = [dx * sx, dy * sy];
+    if (!drag.last) { masks.dab(m, p[0], p[1], r, brush.hardness, amt, mode); drag.last = p; drag.rem = 0; continue; }
+    const [lx, ly] = drag.last;
+    const dist = Math.hypot(p[0] - lx, p[1] - ly);
+    let t = spacing - drag.rem;
+    while (t <= dist) {
+      const k = t / dist;
+      masks.dab(m, lx + (p[0] - lx) * k, ly + (p[1] - ly) * k, r, brush.hardness, amt, mode);
+      t += spacing;
+    }
+    drag.rem = dist - (t - spacing);
+    drag.last = p;
+  }
+  requestRender();
+}
+function endStroke() {
+  const { m, L } = drag;
+  if (masks.end(m)) {
+    L.mask.ver = m.cur;
+    commit();
+    queueMaskSave(m);
+  }
+}
+function clearStrokes() {
+  const L = selLayer();
+  const m = ensureMask(L);
+  if (!m) return;
+  masks.begin(m);
+  masks.fill(m, 0);
+  if (masks.end(m)) { L.mask.ver = m.cur; commit(); queueMaskSave(m); toast('Strokes cleared'); }
+  requestRender();
+}
+const maskSaves = new Set();
+let maskSaveT = 0;
+function queueMaskSave(m) {
+  maskSaves.add(m);
+  clearTimeout(maskSaveT);
+  maskSaveT = setTimeout(() => {
+    maskSaves.forEach((mm) => masks.save(mm));
+    maskSaves.clear();
+    masks.prune(new Set(state.layers.filter((l) => l.mask).map((l) => l.mask.id)));
+  }, 900);
+}
+function setTool(on) {
+  if (on && !doc) return;
+  if (on && !isDB(selLayer())) {
+    const L = state.layers.find(isDB);
+    if (L) state.sel = L.id;
+    else return addLayer('dodgeburn');
+  }
+  brush.active = on;
+  refreshAll();
+}
+function updateToolUI() {
+  $('#brushBtn').classList.toggle('on', brush.active);
+  vp.classList.toggle('brush', brush.active);
+  moveRing();
+}
 
 // ---------------------------------------------------------------- gallery
 const thumbEls = {};
@@ -271,7 +413,7 @@ function scheduleThumbs() {
     while (i < ids.length && performance.now() - t0 < 12) {
       const id = ids[i++];
       const it = ITEMS[id];
-      const out = engine.run('thumb', [{ effect: it.effect, def: EFFECTS[it.effect], params: defaultsFor(id), blend: 0, opacity: 1 }], THUMB_PX);
+      const out = engine.run('thumb', [{ effect: it.effect, def: EFFECTS[it.effect], params: defaultsFor(id), blend: 0, opacity: 1, demo: true }], THUMB_PX);
       const px = engine.read(out);
       thumbEls[id].c.getContext('2d').putImageData(new ImageData(px, THUMB_W, THUMB_H), 0, 0);
       thumbEls[id].b.classList.remove('loading');
@@ -341,6 +483,7 @@ function renderParams() {
   resetBtn.addEventListener('click', () => { L.params = defaultsFor(L.item); commit(); renderParams(); requestRender(); });
   head.append(titles, resetBtn);
   box.append(head);
+  if (isDB(L)) renderBrushPanel(box);
 
   // layer blending
   box.append(el('div', 'p-sec', 'Layer'));
@@ -421,6 +564,32 @@ function renderParams() {
   }
 }
 
+function renderBrushPanel(box) {
+  box.append(el('div', 'p-sec', 'Brush'));
+  const tool = el('button', 'paint-btn' + (brush.active ? ' on' : ''), brush.active ? '◐ Painting — drag on the image' : '◐ Start painting');
+  tool.title = 'Toggle the brush (O)';
+  tool.addEventListener('click', () => setTool(!brush.active));
+  box.append(tool);
+  const segs = el('div', 'segs');
+  ['Dodge', 'Burn', 'Erase'].forEach((name, i) => {
+    const b = el('button', brush.mode === i ? 'on' : '', name);
+    b.addEventListener('click', () => { brush.mode = i; saveBrush(); renderParams(); moveRing(); });
+    segs.append(b);
+  });
+  box.append(rowWith('Mode', segs, null, true).row);
+  const bset = (k) => (v) => { brush[k] = v; saveBrush(); moveRing(); };
+  box.append(rangeRow('Size', brush.size, 4, 1500, 1, 'px', bset('size'), () => {}, () => 180));
+  box.append(rangeRow('Hardness', brush.hardness, 0, 1, 0.01, '', bset('hardness'), () => {}, () => 0));
+  box.append(rangeRow('Exposure', brush.exposure, 0.02, 1, 0.01, '', bset('exposure'), () => {}, () => 0.5));
+  const show = el('button', 'toggle' + (brush.show ? ' on' : ''));
+  show.addEventListener('click', () => { brush.show = !brush.show; show.classList.toggle('on', brush.show); saveBrush(); requestRender(); });
+  box.append(rowWith('Show strokes', show, null, true).row);
+  const clr = el('button', null, 'Clear strokes');
+  clr.addEventListener('click', clearStrokes);
+  box.append(rowWith('', clr, null, true).row);
+  box.append(el('p', 'hint', '<kbd>Alt</kbd> flips dodge ↔ burn · <kbd>X</kbd> swaps · <kbd>[</kbd> <kbd>]</kbd> size · <kbd>⇧</kbd><kbd>[</kbd> <kbd>]</kbd> hardness · hold <kbd>Space</kbd> or right-drag to pan'));
+}
+
 // ---------------------------------------------------------------- layer list
 let dragId = null;
 function renderLayers() {
@@ -484,6 +653,8 @@ function duplicateLayer() {
   const L = selLayer();
   if (!L) return;
   const c = { ...JSON.parse(JSON.stringify(L)), id: uid++ };
+  const m = L.mask && masks.get(L.mask.id);
+  if (m) c.mask = { id: masks.clone(m).id, ver: 0 };
   state.layers.splice(state.layers.indexOf(L) + 1, 0, c);
   state.sel = c.id;
   commit(); refreshAll();
@@ -491,6 +662,8 @@ function duplicateLayer() {
 
 function refreshAll(params = true) {
   if (!state.layers.some((l) => l.id === state.sel)) state.sel = state.layers.length ? state.layers[state.layers.length - 1].id : null;
+  if (brush.active && !isDB(selLayer())) brush.active = false;
+  updateToolUI();
   renderLayers();
   renderParams();
   markGallery();
@@ -552,6 +725,7 @@ function wire() {
   $('#zoomBtn').addEventListener('click', fit);
   $('#exportPng').addEventListener('click', () => exportImage('png'));
   $('#exportJpg').addEventListener('click', () => exportImage('jpeg'));
+  $('#brushBtn').addEventListener('click', () => setTool(!brush.active));
   $('#delLayer').addEventListener('click', deleteLayer);
   $('#dupLayer').addEventListener('click', duplicateLayer);
 
@@ -582,10 +756,25 @@ function wire() {
     }
     if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); exportImage('png'); return; }
     if (typing) return;
+    if (e.key === ' ') { e.preventDefault(); if (!spaceDown) { spaceDown = true; vp.classList.add('panmode'); moveRing(); } return; }
+    if (e.key === 'Alt') { if (lastPointer) { lastPointer.altKey = true; moveRing(); } }
+    if (!mod && e.key.toLowerCase() === 'o') { setTool(!brush.active); return; }
+    if (brush.active && !mod) {
+      const k = e.key;
+      if (k === '[' || k === '{' || k === ']' || k === '}') {
+        const up = k === ']' || k === '}';
+        if (e.shiftKey) brush.hardness = Math.min(1, Math.max(0, brush.hardness + (up ? 0.1 : -0.1)));
+        else brush.size = Math.min(1500, Math.max(4, Math.round(brush.size * (up ? 1.18 : 1 / 1.18))));
+        saveBrush(); moveRing(); renderParams(); return;
+      }
+      if (k.toLowerCase() === 'x' && brush.mode < 2) { brush.mode = 1 - brush.mode; saveBrush(); moveRing(); renderParams(); return; }
+    }
     if (e.key === '\\' && !view.peek) { view.peek = true; applyView(); requestRender(); }
     if ((e.key === 'Delete' || e.key === 'Backspace') && selLayer()) { e.preventDefault(); deleteLayer(); }
   });
   window.addEventListener('keyup', (e) => {
+    if (e.key === ' ') { spaceDown = false; vp.classList.remove('panmode'); moveRing(); }
+    if (e.key === 'Alt' && lastPointer) { lastPointer.altKey = false; moveRing(); }
     if (e.key === '\\') { view.peek = false; applyView(); requestRender(); }
   });
 }
@@ -600,9 +789,14 @@ if (!saved) {
   state.layers = r.layers.map(([item, ov, extra]) => makeLayer(item, ov, extra));
   state.sel = state.layers[state.layers.length - 1].id;
 }
+for (const L of state.layers) {
+  if (!isDB(L)) continue;
+  if (L.mask) { L.mask.ver = 0; await masks.restore(L.mask.id); }
+  ensureMask(L);
+}
 commit();
 refreshAll();
 loadSample();
 
 // debugging handle
-window.tearsheet = { state, engine, applyRecipe, RECIPES, renderNow };
+window.tearsheet = { state, engine, masks, brush, applyRecipe, RECIPES, renderNow, setTool };
