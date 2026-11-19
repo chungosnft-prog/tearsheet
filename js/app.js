@@ -155,9 +155,11 @@ function hud() {
 function buildDoc() {
   if (!original) return;
   const iw = original.width, ih = original.height;
+  const lim = srcLimits();
   let long = state.docLong === 'native' ? Math.max(iw, ih) : +state.docLong;
-  long = Math.min(long, engine.maxTex, 8192);
-  const s = long / Math.max(iw, ih);
+  long = Math.min(long, engine.maxTex, lim.side);
+  let s = long / Math.max(iw, ih);
+  if (iw * ih * s * s > lim.area) s = Math.sqrt(lim.area / (iw * ih));
   const w = Math.max(8, Math.round(iw * s)), h = Math.max(8, Math.round(ih * s));
   docCanvas.width = w; docCanvas.height = h;
   const g = docCanvas.getContext('2d');
@@ -178,15 +180,70 @@ function buildDoc() {
   renderNow();
   scheduleThumbs();
 }
+// iPad/iPhone Safari silently renders canvases over ~16.7 MP blank, so touch
+// devices get a tighter cap on both the kept source and the working document.
+function srcLimits() {
+  const touch = navigator.maxTouchPoints > 1 || /iPad|iPhone|iPod/.test(navigator.userAgent);
+  return touch ? { side: 4096, area: 16e6 } : { side: 8192, area: 64e6 };
+}
+const IMG_EXT = /\.(jpe?g|png|gif|webp|avif|heic|heif|bmp|tiff?)$/i;
+
+// Try every decoder the browser might have; Safari, Chrome and Firefox each
+// fail on different ones (HEIC, EXIF orientation options, missing MIME types).
+async function decodeImage(file) {
+  const attempts = [
+    ['image element', () => new Promise((res, rej) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => { res(img); setTimeout(() => URL.revokeObjectURL(url), 0); };
+      img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('image element could not decode it')); };
+      img.src = url;
+    })],
+    ['bitmap (EXIF)', () => createImageBitmap(file, { imageOrientation: 'from-image' })],
+    ['bitmap', () => createImageBitmap(file)],
+  ];
+  const errs = [];
+  for (const [name, fn] of attempts) {
+    try {
+      const im = await fn();
+      if (im.width && im.height) return im;
+      errs.push(name + ': empty');
+    } catch (e) { errs.push(`${name}: ${e.message || e}`); }
+  }
+  throw new Error(errs.join(' · '));
+}
+
+// copy into a canvas no bigger than the device can handle, then drop the decode
+function normalise(im) {
+  const lim = srcLimits();
+  let s = Math.min(1, lim.side / Math.max(im.width, im.height));
+  if (im.width * im.height * s * s > lim.area) s = Math.sqrt(lim.area / (im.width * im.height));
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(im.width * s));
+  c.height = Math.max(1, Math.round(im.height * s));
+  const g = c.getContext('2d');
+  g.imageSmoothingQuality = 'high';
+  g.drawImage(im, 0, 0, c.width, c.height);
+  if (im.close) im.close();
+  return c;
+}
+
 async function loadFile(file) {
-  if (!file || !file.type.startsWith('image/')) return toast('That isn’t an image');
+  if (!file) return;
+  const looksLikeImage = !file.type || file.type.startsWith('image/') || IMG_EXT.test(file.name || '');
+  if (!looksLikeImage) return toast('That isn’t an image');
+  toast(`Opening ${file.name || 'image'}…`);
   try {
-    original = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    const im = await decodeImage(file);
+    const w = im.width, h = im.height;
+    original = normalise(im);
     buildDoc();
-    toast(`Opened ${file.name || 'image'} (${original.width}×${original.height})`);
+    const shrunk = original.width !== w ? ` → kept at ${original.width}×${original.height}` : '';
+    toast(`Opened ${file.name || 'image'} (${w}×${h}${shrunk})`);
   } catch (e) {
-    console.error(e);
-    toast('Could not read that image');
+    console.error('Could not open image:', e);
+    const heic = /\.(heic|heif)$/i.test(file.name || '') || /hei[cf]/.test(file.type);
+    toast(heic ? 'This browser can’t read HEIC — try Safari, or export the photo as JPEG' : `Could not open that image (${e.message})`, 6000);
   }
 }
 function loadSample() { original = makeSample(); buildDoc(); }
@@ -696,12 +753,12 @@ function exportImage(type) {
 
 // ---------------------------------------------------------------- misc ui
 let toastT = 0;
-function toast(msg) {
+function toast(msg, ms = 1800) {
   const t = $('#toast');
   t.textContent = msg;
   t.classList.add('show');
   clearTimeout(toastT);
-  toastT = setTimeout(() => t.classList.remove('show'), 1800);
+  toastT = setTimeout(() => t.classList.remove('show'), ms);
 }
 function setCompare(v) {
   view.compare = v;
@@ -710,7 +767,6 @@ function setCompare(v) {
 }
 
 function wire() {
-  $('#openBtn').addEventListener('click', () => $('#file').click());
   $('#file').addEventListener('change', (e) => { loadFile(e.target.files[0]); e.target.value = ''; });
   $('#sampleBtn').addEventListener('click', loadSample);
   const ds = $('#docSize');
@@ -799,4 +855,4 @@ refreshAll();
 loadSample();
 
 // debugging handle
-window.tearsheet = { state, engine, masks, brush, applyRecipe, RECIPES, renderNow, setTool };
+window.tearsheet = { state, engine, masks, brush, applyRecipe, RECIPES, renderNow, setTool, loadFile, srcLimits };

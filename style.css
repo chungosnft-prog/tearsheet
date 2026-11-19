@@ -22,6 +22,13 @@ button {
   background: var(--panel2); border: 1px solid var(--line2); border-radius: 6px; padding: 5px 11px; cursor: pointer;
   transition: background .12s, border-color .12s, color .12s;
 }
+label.btn {
+  background: var(--panel2); border: 1px solid var(--line2); border-radius: 6px; padding: 5px 11px; cursor: pointer; white-space: nowrap;
+  transition: background .12s, border-color .12s; -webkit-user-select: none; user-select: none;
+}
+label.btn:hover { background: #2c2b33; border-color: #4a4752; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); border: 0; opacity: 0; }
+#openBtn:has(+ #file:focus-visible) { outline: 2px solid var(--pink); outline-offset: 1px; }
 button:hover { background: #2c2b33; border-color: #4a4752; }
 button:active { transform: translateY(1px); }
 button.primary { background: var(--pink); border-color: var(--pink); color: #1a0711; font-weight: 650; }
